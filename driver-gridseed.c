@@ -294,6 +294,26 @@ static void gc3355_init(struct cgpu_info *gridseed, GRIDSEED_INFO *info)
 		gc3355_switch_voltage(gridseed);
 }
 
+static void set_freq_cmd(GRIDSEED_INFO *info, int pll_r, int pll_f, int pll_od)
+{
+	if (pll_r == 0 && pll_f == 0 && pll_od == 0) {
+		// Support frequency increments of 25.
+		pll_f = info->freq / GRIDSEED_F_IN - 1;
+		pll_f = MAX(0, MIN(127, pll_f));
+	}
+
+	int f_ref = GRIDSEED_F_IN / (pll_r + 1);
+	int f_vco = f_ref * (pll_f + 1);
+	int f_out = f_vco / (1 << pll_od);
+	int pll_bs = (f_out >= 500) ? 1 : 0;
+	int cfg_pm = 1, pll_clk_gate = 1;
+	uint32_t cmd = (cfg_pm << 0) | (pll_clk_gate << 2) | (pll_r << 16) |
+		(pll_f << 21) | (pll_od << 28) | (pll_bs << 31);
+	info->freq = f_out;
+	memcpy(info->freq_cmd, "\x55\xaa\xef\x00", 4);
+	*(uint32_t *)(info->freq_cmd + 4) = htole32(cmd);
+}
+
 static bool get_options(GRIDSEED_INFO *info, char *options)
 {
 	char *ss, *p, *end, *comma, *colon;
@@ -354,22 +374,7 @@ next:
 	}
 	free(ss);
 
-	if (pll_r == 0 && pll_f == 0 && pll_od == 0) {
-		// Support frequency increments of 25.
-		pll_f = info->freq / GRIDSEED_F_IN - 1;
-		pll_f = MAX(0, MIN(127, pll_f));
-	}
-
-	int f_ref = GRIDSEED_F_IN / (pll_r + 1);
-	int f_vco = f_ref * (pll_f + 1);
-	int f_out = f_vco / (1 << pll_od);
-	int pll_bs = (f_out >= 500) ? 1 : 0;
-	int cfg_pm = 1, pll_clk_gate = 1;
-	uint32_t cmd = (cfg_pm << 0) | (pll_clk_gate << 2) | (pll_r << 16) |
-		(pll_f << 21) | (pll_od << 28) | (pll_bs << 31);
-	info->freq = f_out;
-	memcpy(info->freq_cmd, "\x55\xaa\xef\x00", 4);
-	*(uint32_t *)(info->freq_cmd + 4) = htole32(cmd);
+	set_freq_cmd(info, pll_r, pll_f, pll_od);
 
 	return true;
 }
@@ -399,11 +404,8 @@ another:
         tmp = atoi(colon+1);
         if (strcasecmp(p, info->serial)==0) {
                 applog(LOG_NOTICE, "%s unique frequency: %i", p, tmp);
-                int i;
-                for(i=0; opt_frequency[i] != -1; i++) {
-                        if (tmp == opt_frequency[i])
-                                info->freq = tmp;
-                }
+		info->freq = tmp;
+		set_freq_cmd(info, 0, 0, 0);
         }
 
 next:
@@ -413,10 +415,6 @@ next:
                         goto another;
         }
         free(ss);
-
-        int freq_idx = gc3355_find_freq_index(info->freq);
-        info->freq = opt_frequency[freq_idx];
-        memcpy(info->freq_cmd, bin_frequency[freq_idx], 8);
 
         return true;
 }
