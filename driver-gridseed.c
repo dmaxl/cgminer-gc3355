@@ -19,6 +19,7 @@
 #include <strings.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <math.h>
 
 #include "miner.h"
 #include "usbutils.h"
@@ -297,19 +298,21 @@ static void gc3355_init(struct cgpu_info *gridseed, GRIDSEED_INFO *info)
 static void set_freq_cmd(GRIDSEED_INFO *info, int pll_r, int pll_f, int pll_od)
 {
 	if (pll_r == 0 && pll_f == 0 && pll_od == 0) {
-		// Support frequency increments of 25.
-		pll_f = info->freq / GRIDSEED_F_IN - 1;
+		// Support frequency increments of 12.5 MHz
+		// Non-integer frequencies must be specified rounded up
+		pll_r = 1;
+		pll_f = 2 * info->freq / GRIDSEED_F_IN - 1;
 		pll_f = MAX(0, MIN(127, pll_f));
 	}
 
-	int f_ref = GRIDSEED_F_IN / (pll_r + 1);
-	int f_vco = f_ref * (pll_f + 1);
-	int f_out = f_vco / (1 << pll_od);
-	int pll_bs = (f_out >= 500) ? 1 : 0;
+	double f_ref = GRIDSEED_F_IN / (pll_r + 1.);
+	double f_vco = f_ref * (pll_f + 1.);
+	double f_out = f_vco / (1 << pll_od);
+	int pll_bs = (f_out >= 500.) ? 1 : 0;
 	int cfg_pm = 1, pll_clk_gate = 1;
 	uint32_t cmd = (cfg_pm << 0) | (pll_clk_gate << 2) | (pll_r << 16) |
 		(pll_f << 21) | (pll_od << 28) | (pll_bs << 31);
-	info->freq = f_out;
+	info->freq = (int)ceil(f_out);
 	memcpy(info->freq_cmd, "\x55\xaa\xef\x00", 4);
 	*(uint32_t *)(info->freq_cmd + 4) = htole32(cmd);
 }
