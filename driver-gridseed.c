@@ -406,9 +406,12 @@ another:
 
         tmp = atoi(colon+1);
         if (strcasecmp(p, info->serial)==0) {
-                applog(LOG_NOTICE, "%s unique frequency: %i", p, tmp);
 		info->freq = tmp;
 		set_freq_cmd(info, 0, 0, 0);
+		if (info->freq == tmp)
+			applog(LOG_NOTICE, "%s unique frequency: %i MHz", p, info->freq);
+		else
+			applog(LOG_NOTICE, "%s unique frequency: requested %i MHz, using instead %i MHz", p, tmp, info->freq);
         }
 
 next:
@@ -658,8 +661,8 @@ static bool gridseed_detect_one(libusb_device *dev, struct usb_find_devices *fou
 	}
 
 	info->fw_version = le32toh(*(uint32_t *)(rbuf+8));
-	applog(LOG_NOTICE, "Device found, firmware version %08X, driver version %s",
-		info->fw_version, gridseed_version);
+	applog(LOG_NOTICE, "Device found, firmware version %08X, driver version %s, serial %s",
+		info->fw_version, gridseed_version, info->serial);
 
 	gc3355_init(gridseed, info);
 
