@@ -21,6 +21,9 @@
 #define GRIDSEED_HASH_SPEED		((double)0.0851128926)  // in ms
 #define GRIDSEED_F_IN			25  // input frequency
 
+#define GRIDSEED_MIN_FREQUENCY		13
+#define GRIDSEED_MAX_FREQUENCY		1600
+
 #define GRIDSEED_PROXY_PORT		3350
 
 #define GRIDSEED_PERIPH_BASE		((uint32_t)0x40000000)

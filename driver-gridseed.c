@@ -300,6 +300,7 @@ static void set_freq_cmd(GRIDSEED_INFO *info, int pll_r, int pll_f, int pll_od)
 	if (pll_r == 0 && pll_f == 0 && pll_od == 0) {
 		// Support frequency increments of 12.5 MHz
 		// Non-integer frequencies must be specified rounded up
+		// With these values the minimum we can set is 12.5 and the max 1600 (theoretically)
 		pll_r = 1;
 		pll_f = 2 * info->freq / GRIDSEED_F_IN - 1;
 		pll_f = MAX(0, MIN(127, pll_f));
@@ -759,6 +760,40 @@ static int64_t gridseed_scanhash(struct thr_info *thr, struct work *work, int64_
 	return GRIDSEED_HASH_SPEED * (double)elapsed_ms * (double)(info->freq * info->chips);
 }
 
+static char *gridseed_set_device(struct cgpu_info *gridseed, char *option, char *setting, char *replybuf)
+{
+	GRIDSEED_INFO *info = gridseed->device_data;
+	int val;
+
+	if (strcasecmp(option, "help") == 0) {
+		sprintf(replybuf, "freq: range %d-%d",
+				GRIDSEED_MIN_FREQUENCY, GRIDSEED_MAX_FREQUENCY);
+		return replybuf;
+	}
+
+	if (strcasecmp(option, "freq") == 0) {
+		if (!setting || !*setting) {
+			sprintf(replybuf, "missing freq setting");
+			return replybuf;
+		}
+
+		val = atoi(setting);
+		if (val < GRIDSEED_MIN_FREQUENCY || val > GRIDSEED_MAX_FREQUENCY) {
+			sprintf(replybuf, "invalid freq: '%s' valid range %d-%d",
+						setting, GRIDSEED_MIN_FREQUENCY, GRIDSEED_MAX_FREQUENCY);
+			return replybuf;
+		}
+
+		info->freq = val;
+		set_freq_cmd(info, 0, 0, 0);
+		gc3355_set_core_freq(gridseed);
+		return NULL;
+	}
+
+	sprintf(replybuf, "Unknown option: %s", option);
+	return replybuf;
+}
+
 /* driver functions */
 struct device_drv gridseed_drv = {
 	.drv_id = DRIVER_gridseed,
@@ -769,4 +804,5 @@ struct device_drv gridseed_drv = {
 	.get_statline_before = gridseed_get_statline_before,
 	.prepare_work = gridseed_prepare_work,
 	.scanhash = gridseed_scanhash,
+	.set_device = gridseed_set_device,
 };
