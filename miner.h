@@ -383,6 +383,9 @@ struct device_drv {
 	void (*thread_shutdown)(struct thr_info *);
 	void (*thread_enable)(struct thr_info *);
 
+	uint32_t (*register_read)(struct cgpu_info *, uint32_t, uint32_t *);
+	uint32_t (*register_write)(struct cgpu_info *, uint32_t, uint32_t);
+
 	// Does it need to be free()d?
 	bool copy;
 

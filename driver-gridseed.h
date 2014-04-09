@@ -49,6 +49,10 @@ typedef struct s_gridseed_info {
         int             chips; //chips per module
         int             voltage;
         int             per_chip_stats;
+
+        uint32_t        reg_read_addr;
+        uint32_t        reg_read_value;
+        cgsem_t         pending_reg_read_sem;
 } GRIDSEED_INFO;
 
 extern struct device_drv gridseed_drv;

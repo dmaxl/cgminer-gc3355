@@ -444,6 +444,11 @@ static const char *JSON_PARAMETER = "parameter";
 #define MSG_LOCKOK 123
 #define MSG_LOCKDIS 124
 
+#ifdef HAVE_AN_ASIC
+#define MSG_ASCREGR 125
+#define MSG_ASCREGW 126
+#endif
+
 enum code_severity {
 	SEVERITY_ERR,
 	SEVERITY_WARN,
@@ -646,6 +651,7 @@ struct CODES {
  { SEVERITY_INFO,  MSG_ASCHELP, PARAM_BOTH,	"ASC %d set help: %s" },
  { SEVERITY_SUCC,  MSG_ASCSETOK, PARAM_BOTH,	"ASC %d set OK" },
  { SEVERITY_ERR,   MSG_ASCSETERR, PARAM_BOTH,	"ASC %d set failed: %s" },
+ { SEVERITY_SUCC,  MSG_ASCREGR,	PARAM_ASC,	"ASC %d register read" },
 #endif
  { SEVERITY_SUCC,  MSG_LOCKOK,	PARAM_NONE,	"Lock stats created" },
  { SEVERITY_WARN,  MSG_LOCKDIS,	PARAM_NONE,	"Lock stats not enabled" },
@@ -4265,6 +4271,83 @@ static void ascset(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe
 			message(io_data, MSG_ASCSETOK, id, NULL, isjson);
 	}
 }
+
+static void gsdregread(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe_unused char *param, bool isjson, __maybe_unused char group)
+{
+	struct api_data *root = NULL;
+	struct cgpu_info *cgpu;
+	struct device_drv *drv;
+	char buf[TMPBUFSIZ], *ret;
+	int numasc = numascs();
+	bool io_open;
+	uint32_t reg_addr = 0, reg_value = 0;
+	char reg_addr_str[12], reg_value_str[12];
+
+	if (numasc == 0) {
+		message(io_data, MSG_ASCNON, 0, NULL, isjson);
+		return;
+	}
+
+	if (param == NULL || *param == '\0') {
+		message(io_data, MSG_MISID, 0, NULL, isjson);
+		return;
+	}
+
+	char *opt = strchr(param, ',');
+	if (opt)
+		*(opt++) = '\0';
+	if (!opt || !*opt) {
+		message(io_data, MSG_MISASCOPT, 0, NULL, isjson);
+		return;
+	}
+
+	int id = atoi(param);
+	if (id < 0 || id >= numasc) {
+		message(io_data, MSG_INVASC, id, NULL, isjson);
+		return;
+	}
+
+	int dev = ascdevice(id);
+	if (dev < 0) { // Should never happen
+		message(io_data, MSG_INVASC, id, NULL, isjson);
+		return;
+	}
+
+	cgpu = get_devices(dev);
+	drv = cgpu->drv;
+
+	if (drv->drv_id != DRIVER_gridseed) {
+		message(io_data, MSG_ASCNOSET, id, NULL, isjson);
+		return;
+	}
+	
+	applog(LOG_INFO, "Reading register address %s", opt);
+	
+	if (sscanf(opt, "0x%x", &reg_addr) != 1) {
+		message(io_data, MSG_INVASC, id, NULL, isjson);
+		return;
+	}
+	
+	drv->register_read(cgpu, reg_addr, &reg_value);
+	if (reg_value) {
+		sprintf(reg_addr_str, "0x%.8x", reg_addr);
+		sprintf(reg_value_str, "0x%.8x", reg_value);
+	} else {
+		sprintf(reg_addr_str, "0x0");
+		sprintf(reg_value_str, "0x0");
+	}
+	
+	message(io_data, MSG_ASCREGR, id, NULL, isjson);
+	io_open = io_add(io_data, isjson ? COMSTR JSON_SUMMARY : _SUMMARY COMSTR);
+
+	root = api_add_string(root, "Register Address:", reg_addr_str, true);
+	root = api_add_string(root, "Register Value:", reg_value_str, true);
+
+	root = print_data(root, buf, isjson, false);
+	io_add(io_data, buf);
+	if (isjson && io_open)
+		io_close(io_data);
+}
 #endif
 
 static void checkcommand(struct io_data *io_data, __maybe_unused SOCKETTYPE c, char *param, bool isjson, char group);
@@ -4331,6 +4414,7 @@ struct CMDS {
 	{ "ascdisable",		ascdisable,	true },
 	{ "ascidentify",	ascidentify,	true },
 	{ "ascset",		ascset,		true },
+	{ "gsdregread",		gsdregread,	false },
 #endif
 	{ "asccount",		asccount,	false },
 	{ "lockstats",		lockstats,	true },

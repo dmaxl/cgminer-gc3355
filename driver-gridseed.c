@@ -616,6 +616,9 @@ static bool gridseed_detect_one(libusb_device *dev, struct usb_find_devices *fou
 	info->serial = strdup(gridseed->usbdev->serial_string);
 	memset(info->nonce_count, 0, sizeof(info->nonce_count));
 	memset(info->error_count, 0, sizeof(info->error_count));
+	info->reg_read_addr = 0;
+	info->reg_read_value = 0;
+	cgsem_init(&info->pending_reg_read_sem);
 
 	get_options(info, opt_gridseed_options);
 	get_freq(info, opt_gridseed_freq);
@@ -739,6 +742,14 @@ static int64_t gridseed_scanhash(struct thr_info *thr, struct work *work, int64_
 		return -1;
 	}
 
+	if (info->reg_read_addr) {
+		if (!gc3355_read_register(gridseed, info->reg_read_addr, &info->reg_read_value)) {
+			info->reg_read_value = 0;
+		}
+		info->reg_read_addr = 0;
+		cgsem_post(&info->pending_reg_read_sem);
+	}
+
 	cgtime(&info->scanhash_time);
 	elapsed_ms = ms_tdiff(&info->scanhash_time, &old_scanhash_time);
 	return GRIDSEED_HASH_SPEED * (double)elapsed_ms * (double)(info->freq * info->chips);
@@ -778,6 +789,21 @@ static char *gridseed_set_device(struct cgpu_info *gridseed, char *option, char 
 	return replybuf;
 }
 
+static uint32_t gridseed_register_read(struct cgpu_info *gridseed, uint32_t reg_addr, uint32_t *reg_value)
+{
+	GRIDSEED_INFO *info = gridseed->device_data;
+
+	if (reg_addr < 0x40000000 || reg_addr > 0x40023400) {
+		return 0;
+	}
+	
+	info->reg_read_addr = reg_addr;
+	cgsem_mswait(&info->pending_reg_read_sem, 5000);
+	*reg_value = info->reg_read_value;
+	
+	return *reg_value;
+}
+
 /* driver functions */
 struct device_drv gridseed_drv = {
 	.drv_id = DRIVER_gridseed,
@@ -789,4 +815,5 @@ struct device_drv gridseed_drv = {
 	.prepare_work = gridseed_prepare_work,
 	.scanhash = gridseed_scanhash,
 	.set_device = gridseed_set_device,
+	.register_read = gridseed_register_read,
 };
