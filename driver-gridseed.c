@@ -778,6 +778,15 @@ static char *gridseed_set_device(struct cgpu_info *gridseed, char *option, char 
 	return replybuf;
 }
 
+static void gridseed_shutdown(struct thr_info *thr)
+{
+	struct cgpu_info *gridseed = thr->cgpu;
+	GRIDSEED_INFO *info = gridseed->device_data;
+
+	applog(LOG_NOTICE, "Resetting %s%i", gridseed->drv->name, gridseed->device_id);
+	gc3355_send_cmds(gridseed, str_reset);
+}
+
 /* driver functions */
 struct device_drv gridseed_drv = {
 	.drv_id = DRIVER_gridseed,
@@ -789,4 +798,5 @@ struct device_drv gridseed_drv = {
 	.prepare_work = gridseed_prepare_work,
 	.scanhash = gridseed_scanhash,
 	.set_device = gridseed_set_device,
+	.thread_shutdown = gridseed_shutdown,
 };
