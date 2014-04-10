@@ -6393,6 +6393,7 @@ static void hash_sole_work(struct thr_info *mythr)
 	cgtime(&tv_lastupdate);
 
 	while (likely(!cgpu->shutdown)) {
+		applog(LOG_DEBUG, "Entered hash_sole_work while loop");
 		struct work *work = get_work(mythr, thr_id);
 		int64_t hashes;
 
@@ -6429,6 +6430,7 @@ static void hash_sole_work(struct thr_info *mythr)
 #endif
 
 		do {
+			applog(LOG_DEBUG, "Entered hash_sole_work do loop");
 			cgtime(&tv_start);
 
 			subtime(&tv_start, &getwork_start);
@@ -6472,6 +6474,8 @@ static void hash_sole_work(struct thr_info *mythr)
 				cgpu->shutdown = true;
 				break;
 			}
+			if (likely(cgpu->shutdown))
+				break;
 
 			hashes_done += hashes;
 			if (hashes > cgpu->max_hashes)
@@ -6487,11 +6491,14 @@ static void hash_sole_work(struct thr_info *mythr)
 
 			timersub(tv_end, &tv_workstart, &wdiff);
 
+			if (likely(max_nonce != 0xffffffff)) {
 			if (unlikely((long)sdiff.tv_sec < cycle)) {
 				int mult;
 
-				if (likely(max_nonce == 0xffffffff))
+				if (likely(max_nonce == 0xffffffff)) {
+					applog(LOG_DEBUG, "Calling continue");
 					continue;
+				}
 
 				mult = 1000000 / ((sdiff.tv_usec + 0x400) / 0x400) + 0x10;
 				mult *= cycle;
@@ -6503,6 +6510,7 @@ static void hash_sole_work(struct thr_info *mythr)
 				max_nonce = max_nonce * cycle / sdiff.tv_sec;
 			else if (unlikely(sdiff.tv_usec > 100000))
 				max_nonce = max_nonce * 0x400 / (((cycle * 1000000) + sdiff.tv_usec) / (cycle * 1000000 / 0x400));
+			}
 
 			timersub(tv_end, &tv_lastupdate, &diff);
 			/* Update the hashmeter at most 5 times per second */
@@ -6534,7 +6542,9 @@ static void hash_sole_work(struct thr_info *mythr)
 			sdiff.tv_sec = sdiff.tv_usec = 0;
 		} while (!abandon_work(work, &wdiff, cgpu->max_hashes));
 		free_work(work);
+		applog(LOG_DEBUG, "Left hash_sole_work do loop");
 	}
+	applog(LOG_DEBUG, "Left hash_sole_work while loop");
 	cgpu->deven = DEV_DISABLED;
 }
 
