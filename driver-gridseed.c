@@ -44,6 +44,8 @@
 #include "hexdump.c"
 #include "util.h"
 
+#define API_REGISTER_METHOD 2
+
 static const char *gridseed_version = "v3.8.5.20140210.02";
 
 static const char *str_reset[] = {
@@ -617,8 +619,11 @@ static bool gridseed_detect_one(libusb_device *dev, struct usb_find_devices *fou
 	memset(info->nonce_count, 0, sizeof(info->nonce_count));
 	memset(info->error_count, 0, sizeof(info->error_count));
 	info->reg_read_addr = 0;
-	info->reg_read_value = 0;
-	cgsem_init(&info->pending_reg_read_sem);
+	info->reg_write_addr = 0;
+	info->reg_value = 0;
+	info->reg_result = false;
+	cgsem_init(&info->regsem);
+	mutex_init(&info->reglock);
 
 	get_options(info, opt_gridseed_options);
 	get_freq(info, opt_gridseed_freq);
@@ -742,13 +747,18 @@ static int64_t gridseed_scanhash(struct thr_info *thr, struct work *work, int64_
 		return -1;
 	}
 
+#if API_REGISTER_METHOD == 2
 	if (info->reg_read_addr) {
-		if (!gc3355_read_register(gridseed, info->reg_read_addr, &info->reg_read_value)) {
-			info->reg_read_value = 0;
-		}
+		info->reg_result = gc3355_read_register(gridseed, info->reg_read_addr, &info->reg_value);
 		info->reg_read_addr = 0;
-		cgsem_post(&info->pending_reg_read_sem);
+		cgsem_post(&info->regsem);
 	}
+	if (info->reg_write_addr) {
+		info->reg_result = gc3355_write_register(gridseed, info->reg_write_addr, info->reg_value);
+		info->reg_write_addr = 0;
+		cgsem_post(&info->regsem);
+	}
+#endif
 
 	cgtime(&info->scanhash_time);
 	elapsed_ms = ms_tdiff(&info->scanhash_time, &old_scanhash_time);
@@ -789,20 +799,102 @@ static char *gridseed_set_device(struct cgpu_info *gridseed, char *option, char 
 	return replybuf;
 }
 
-static uint32_t gridseed_register_read(struct cgpu_info *gridseed, uint32_t reg_addr, uint32_t *reg_value)
+static bool gridseed_register_read(struct cgpu_info *gridseed, uint32_t reg_addr, uint32_t *reg_value, char *replybuf)
 {
 	GRIDSEED_INFO *info = gridseed->device_data;
+	int ret;
+	bool result = true;
 
 	if (reg_addr < 0x40000000 || reg_addr > 0x40023400) {
-		return 0;
+		sprintf(replybuf, "Cannot read from register address 0x%.8x on %s %d, out of permitted range",
+				reg_addr, gridseed->drv->name, gridseed->device_id);
+		return false;
 	}
-	
+
+#if API_REGISTER_METHOD == 1
+	mutex_lock(&info->reglock);
+	result = gc3355_read_register(gridseed, reg_addr, reg_value);
+	mutex_unlock(&info->reglock);
+#endif
+
+#if API_REGISTER_METHOD == 2
+	mutex_lock(&info->reglock);
 	info->reg_read_addr = reg_addr;
-	cgsem_mswait(&info->pending_reg_read_sem, 5000);
-	*reg_value = info->reg_read_value;
+	ret = cgsem_mswait(&info->regsem, 5000);
+	result = info->reg_result;
+	*reg_value = info->reg_value;
+	info->reg_read_addr = 0;
+	mutex_unlock(&info->reglock);
 	
-	return *reg_value;
+	if (ret != 0) {
+		sprintf(replybuf, "Timed out waiting to read from register address 0x%.8x on %s %d",
+				reg_addr, gridseed->drv->name, gridseed->device_id);
+		return false;
+	}
+#endif
+
+	if (!result) {
+		sprintf(replybuf, "Error reading from register address 0x%.8x on %s %d",
+				reg_addr, gridseed->drv->name, gridseed->device_id);
+		return false;
+	}
+
+	applog(LOG_INFO, "Read register address 0x%.8x on %s %d",
+			reg_addr, gridseed->drv->name, gridseed->device_id);
+
+	return true;
 }
+
+static bool gridseed_register_write(struct cgpu_info *gridseed, uint32_t reg_addr, uint32_t reg_value, char *replybuf)
+{
+	GRIDSEED_INFO *info = gridseed->device_data;
+	int ret;
+	bool result;
+
+	if (reg_addr < 0x40000000 || reg_addr > 0x40023400) {
+		sprintf(replybuf, "Cannot write to register address 0x%.8x on %s %d, out of permitted range",
+				reg_addr, gridseed->drv->name, gridseed->device_id);
+		return false;
+	}
+
+#if API_REGISTER_METHOD == 1
+	mutex_lock(&info->reglock);
+	result = gc3355_write_register(gridseed, reg_addr, reg_value);
+	mutex_unlock(&info->reglock);
+#endif
+
+#if API_REGISTER_METHOD == 2
+	mutex_lock(&info->reglock);
+	info->reg_write_addr = reg_addr;
+	info->reg_value = reg_value;
+	ret = cgsem_mswait(&info->regsem, 5000);
+	result = info->reg_result;
+	info->reg_write_addr = 0;
+	mutex_unlock(&info->reglock);
+
+	if (ret != 0) {
+		sprintf(replybuf, "Timed out waiting to write to register address 0x%.8x on %s %d",
+				reg_addr, gridseed->drv->name, gridseed->device_id);
+		return false;
+	}
+#endif
+
+	if (!result) {
+		sprintf(replybuf, "Error writing to register address 0x%.8x on %s %d",
+				reg_addr, gridseed->drv->name, gridseed->device_id);
+		return false;
+	}
+
+	applog(LOG_INFO, "Wrote register address 0x%.8x on %s %d",
+			reg_addr, gridseed->drv->name, gridseed->device_id);
+
+	return true;
+}
+
+/*
+cgsem_destroy(&info->regsem);
+mutex_destroy(&info->reglock);
+ */
 
 /* driver functions */
 struct device_drv gridseed_drv = {
@@ -816,4 +908,5 @@ struct device_drv gridseed_drv = {
 	.scanhash = gridseed_scanhash,
 	.set_device = gridseed_set_device,
 	.register_read = gridseed_register_read,
+	.register_write = gridseed_register_write,
 };

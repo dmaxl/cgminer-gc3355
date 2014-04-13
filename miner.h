@@ -383,8 +383,8 @@ struct device_drv {
 	void (*thread_shutdown)(struct thr_info *);
 	void (*thread_enable)(struct thr_info *);
 
-	uint32_t (*register_read)(struct cgpu_info *, uint32_t, uint32_t *);
-	uint32_t (*register_write)(struct cgpu_info *, uint32_t, uint32_t);
+	bool (*register_read)(struct cgpu_info *, uint32_t, uint32_t *, char *);
+	bool (*register_write)(struct cgpu_info *, uint32_t, uint32_t, char *);
 
 	// Does it need to be free()d?
 	bool copy;
@@ -1585,7 +1585,8 @@ enum api_data_type {
 	API_VOLTS,
 	API_HS,
 	API_DIFF,
-	API_PERCENT
+	API_PERCENT,
+	API_HEX
 };
 
 struct api_data {
@@ -1620,5 +1621,6 @@ extern struct api_data *api_add_volts(struct api_data *root, char *name, float *
 extern struct api_data *api_add_hs(struct api_data *root, char *name, double *data, bool copy_data);
 extern struct api_data *api_add_diff(struct api_data *root, char *name, double *data, bool copy_data);
 extern struct api_data *api_add_percent(struct api_data *root, char *name, double *data, bool copy_data);
+extern struct api_data *api_add_hex(struct api_data *root, char *name, uint32_t *data, bool copy_data);
 
 #endif /* __MINER_H__ */

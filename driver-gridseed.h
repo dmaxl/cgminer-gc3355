@@ -36,23 +36,26 @@
 		_transfer(gridseed, request_type, bRequest, wValue, wIndex, NULL, 0, cmd)
 
 typedef struct s_gridseed_info {
-        enum sub_ident  ident;
-        uint32_t        fw_version;
-        struct timeval  scanhash_time;
-        int             nonce_count[GRIDSEED_MAX_CHIPS];  // per chip
-        int             error_count[8];  // per chip
-        char            *serial;
-        // options
-        int             baud;
-        int             freq;
-        unsigned char   freq_cmd[8];
-        int             chips; //chips per module
-        int             voltage;
-        int             per_chip_stats;
+	enum sub_ident  ident;
+	uint32_t        fw_version;
+	struct timeval  scanhash_time;
+	int             nonce_count[GRIDSEED_MAX_CHIPS];  // per chip
+	int             error_count[8];  // per chip
+	char            *serial;
+	// options
+	int             baud;
+	int             freq;
+	unsigned char   freq_cmd[8];
+	int             chips; //chips per module
+	int             voltage;
+	int             per_chip_stats;
 
-        uint32_t        reg_read_addr;
-        uint32_t        reg_read_value;
-        cgsem_t         pending_reg_read_sem;
+	uint32_t        reg_read_addr;
+	uint32_t	reg_write_addr;
+	uint32_t        reg_value;
+	bool		reg_result;
+	cgsem_t         regsem;
+	pthread_mutex_t	reglock;
 } GRIDSEED_INFO;
 
 extern struct device_drv gridseed_drv;

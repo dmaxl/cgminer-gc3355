@@ -445,8 +445,12 @@ static const char *JSON_PARAMETER = "parameter";
 #define MSG_LOCKDIS 124
 
 #ifdef HAVE_AN_ASIC
-#define MSG_ASCREGR 125
-#define MSG_ASCREGW 126
+#define MSG_ASCNOREG 125
+#define MSG_ASCREGHELP 126
+#define MSG_ASCREGROK 127
+#define MSG_ASCREGWOK 128
+#define MSG_ASCREGRERR 129
+#define MSG_ASCREGWERR 130
 #endif
 
 enum code_severity {
@@ -651,7 +655,12 @@ struct CODES {
  { SEVERITY_INFO,  MSG_ASCHELP, PARAM_BOTH,	"ASC %d set help: %s" },
  { SEVERITY_SUCC,  MSG_ASCSETOK, PARAM_BOTH,	"ASC %d set OK" },
  { SEVERITY_ERR,   MSG_ASCSETERR, PARAM_BOTH,	"ASC %d set failed: %s" },
- { SEVERITY_SUCC,  MSG_ASCREGR,	PARAM_ASC,	"ASC %d register read" },
+ { SEVERITY_SUCC,  MSG_ASCNOREG, PARAM_ASC,	"ASC %d does not support MCU register functions" },
+ { SEVERITY_SUCC,  MSG_ASCREGHELP, PARAM_STR,	"Missing required options: %s" },
+ { SEVERITY_SUCC,  MSG_ASCREGROK, PARAM_BOTH,	"ASC %d read register OK" },
+ { SEVERITY_SUCC,  MSG_ASCREGWOK, PARAM_BOTH,	"ASC %d write register OK" },
+ { SEVERITY_SUCC,  MSG_ASCREGRERR, PARAM_BOTH,	"ASC %d read register failed: %s" },
+ { SEVERITY_SUCC,  MSG_ASCREGWERR, PARAM_BOTH,	"ASC %d write register failed: %s" },
 #endif
  { SEVERITY_SUCC,  MSG_LOCKOK,	PARAM_NONE,	"Lock stats created" },
  { SEVERITY_WARN,  MSG_LOCKDIS,	PARAM_NONE,	"Lock stats not enabled" },
@@ -967,6 +976,7 @@ static struct api_data *api_add_data_full(struct api_data *root, char *name, enu
 				api_data->data = (void *)malloc(sizeof(unsigned int));
 				*((unsigned int *)(api_data->data)) = *((unsigned int *)data);
 				break;
+			case API_HEX:
 			case API_UINT32:
 				api_data->data = (void *)malloc(sizeof(uint32_t));
 				*((uint32_t *)(api_data->data)) = *((uint32_t *)data);
@@ -1136,6 +1146,11 @@ struct api_data *api_add_percent(struct api_data *root, char *name, double *data
 	return api_add_data_full(root, name, API_PERCENT, (void *)data, copy_data);
 }
 
+struct api_data *api_add_hex(struct api_data *root, char *name, uint32_t *data, bool copy_data)
+{
+	return api_add_data_full(root, name, API_HEX, (void *)data, copy_data);
+}
+
 static struct api_data *print_data(struct api_data *root, char *buf, bool isjson, bool precom)
 {
 	struct api_data *tmp;
@@ -1239,6 +1254,9 @@ static struct api_data *print_data(struct api_data *root, char *buf, bool isjson
 				break;
 			case API_PERCENT:
 				sprintf(buf, "%.4f", *((double *)(root->data)) * 100.0);
+				break;
+			case API_HEX:
+				sprintf(buf, "0x%.8x", *((uint32_t *)(root->data)));
 				break;
 			default:
 				applog(LOG_ERR, "API: unknown2 data type %d ignored", root->type);
@@ -4272,16 +4290,15 @@ static void ascset(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe
 	}
 }
 
-static void gsdregread(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe_unused char *param, bool isjson, __maybe_unused char group)
+static void ascregread(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe_unused char *param, bool isjson, __maybe_unused char group)
 {
 	struct api_data *root = NULL;
 	struct cgpu_info *cgpu;
 	struct device_drv *drv;
-	char buf[TMPBUFSIZ], *ret;
+	char buf[TMPBUFSIZ]; buf[0] = 0;
 	int numasc = numascs();
-	bool io_open;
 	uint32_t reg_addr = 0, reg_value = 0;
-	char reg_addr_str[12], reg_value_str[12];
+	bool io_open = false;
 
 	if (numasc == 0) {
 		message(io_data, MSG_ASCNON, 0, NULL, isjson);
@@ -4297,7 +4314,7 @@ static void gsdregread(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __m
 	if (opt)
 		*(opt++) = '\0';
 	if (!opt || !*opt) {
-		message(io_data, MSG_MISASCOPT, 0, NULL, isjson);
+		message(io_data, MSG_ASCREGHELP, 0, "N,<register address>", isjson);
 		return;
 	}
 
@@ -4316,37 +4333,100 @@ static void gsdregread(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __m
 	cgpu = get_devices(dev);
 	drv = cgpu->drv;
 
-	if (drv->drv_id != DRIVER_gridseed) {
-		message(io_data, MSG_ASCNOSET, id, NULL, isjson);
+	if (!drv->register_read) {
+		message(io_data, MSG_ASCNOREG, id, NULL, isjson);
 		return;
 	}
-	
-	applog(LOG_INFO, "Reading register address %s", opt);
-	
-	if (sscanf(opt, "0x%x", &reg_addr) != 1) {
+
+	reg_addr = strtoul(opt, NULL, 0);
+
+	if (drv->register_read(cgpu, reg_addr, &reg_value, buf)) {
+		//sprintf(reg_addr_str, "0x%.8x", reg_addr);
+		//sprintf(reg_value_str, "0x%.8x", reg_value);
+		message(io_data, MSG_ASCREGROK, id, NULL, isjson);
+		if (isjson)
+			io_open = io_add(io_data, COMSTR JSON_ASC);
+		//io_open = io_add(io_data, isjson ? COMSTR JSON_ASC : _ASC COMSTR);
+
+		root = api_add_int(root, "ASC", &id, false);
+		root = api_add_string(root, "Name", cgpu->drv->name, false);
+		root = api_add_int(root, "ID", &(cgpu->device_id), false);
+		root = api_add_string(root, "Serial", cgpu->usbdev->serial_string, false);
+		root = api_add_hex(root, "Register Address", &reg_addr, false);
+		root = api_add_hex(root, "Register Value", &reg_value, false);
+
+		root = print_data(root, buf, isjson, false);
+		io_add(io_data, buf);
+		if (isjson && io_open)
+			io_close(io_data);
+	} else {
+		message(io_data, MSG_ASCREGRERR, id, buf, isjson);
+	}
+}
+
+static void ascregwrite(struct io_data *io_data, __maybe_unused SOCKETTYPE c, __maybe_unused char *param, bool isjson, __maybe_unused char group)
+{
+	struct api_data *root = NULL;
+	struct cgpu_info *cgpu;
+	struct device_drv *drv;
+	char buf[TMPBUFSIZ]; buf[0] = 0;
+	int numasc = numascs();
+	uint32_t reg_addr = 0, reg_value = 0;
+	bool io_open = false;
+
+	if (numasc == 0) {
+		message(io_data, MSG_ASCNON, 0, NULL, isjson);
+		return;
+	}
+
+	if (param == NULL || *param == '\0') {
+		message(io_data, MSG_MISID, 0, NULL, isjson);
+		return;
+	}
+
+	char *opt = strchr(param, ',');
+	if (opt)
+		*(opt++) = '\0';
+	if (!opt || !*opt) {
+		message(io_data, MSG_ASCREGHELP, 0, "N,<register address>,<register value>", isjson);
+		return;
+	}
+
+	int id = atoi(param);
+	if (id < 0 || id >= numasc) {
 		message(io_data, MSG_INVASC, id, NULL, isjson);
 		return;
 	}
-	
-	drv->register_read(cgpu, reg_addr, &reg_value);
-	if (reg_value) {
-		sprintf(reg_addr_str, "0x%.8x", reg_addr);
-		sprintf(reg_value_str, "0x%.8x", reg_value);
-	} else {
-		sprintf(reg_addr_str, "0x0");
-		sprintf(reg_value_str, "0x0");
+
+	int dev = ascdevice(id);
+	if (dev < 0) { // Should never happen
+		message(io_data, MSG_INVASC, id, NULL, isjson);
+		return;
 	}
-	
-	message(io_data, MSG_ASCREGR, id, NULL, isjson);
-	io_open = io_add(io_data, isjson ? COMSTR JSON_SUMMARY : _SUMMARY COMSTR);
 
-	root = api_add_string(root, "Register Address:", reg_addr_str, true);
-	root = api_add_string(root, "Register Value:", reg_value_str, true);
+	cgpu = get_devices(dev);
+	drv = cgpu->drv;
 
-	root = print_data(root, buf, isjson, false);
-	io_add(io_data, buf);
-	if (isjson && io_open)
-		io_close(io_data);
+	char *set = strchr(opt, ',');
+	if (set)
+		*(set++) = '\0';
+	if (!set || !*set) {
+		message(io_data, MSG_ASCREGHELP, 0, "N,<register address>,<register value>", isjson);
+		return;
+	}
+
+	if (!drv->register_write) {
+		message(io_data, MSG_ASCNOREG, id, NULL, isjson);
+		return;
+	}
+
+	reg_addr = strtoul(opt, NULL, 0);
+	reg_value = strtoul(set, NULL, 0);
+
+	if (drv->register_write(cgpu, reg_addr, reg_value, buf))
+		message(io_data, MSG_ASCREGWOK, id, NULL, isjson);
+	else
+		message(io_data, MSG_ASCREGWERR, id, buf, isjson);
 }
 #endif
 
@@ -4414,7 +4494,8 @@ struct CMDS {
 	{ "ascdisable",		ascdisable,	true },
 	{ "ascidentify",	ascidentify,	true },
 	{ "ascset",		ascset,		true },
-	{ "gsdregread",		gsdregread,	false },
+	{ "ascregread",		ascregread,	false },
+	{ "ascregwrite",	ascregwrite,	true },
 #endif
 	{ "asccount",		asccount,	false },
 	{ "lockstats",		lockstats,	true },
