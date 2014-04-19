@@ -123,6 +123,8 @@ static int gc3355_get_data(struct cgpu_info *gridseed, unsigned char *buf, int s
 	readcount = size;
 	p = buf;
 	while(readcount > 0) {
+		if (likely(gridseed->shutdown))
+			return -1;
 		err = usb_read_once(gridseed, p, readcount, &amount, C_GETRESULTS);
 		if (err) {
 			if (readcount != size)
@@ -734,7 +736,7 @@ static int64_t gridseed_scanhash(struct thr_info *thr, struct work *work, int64_
 			return -1;
 		}
 	}
-	if (ret != 0 && ret != LIBUSB_ERROR_TIMEOUT) {
+	if (ret != 0 && ret != -1 && ret != LIBUSB_ERROR_TIMEOUT) {
 		applog(LOG_ERR, "No response from %i", gridseed->device_id);
 		return -1;
 	}
